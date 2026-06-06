@@ -1,7 +1,9 @@
 # Scorer deploy (private compose override)
 
 Layers the LLM-as-Judge scoring stage onto the **public** observability stack
-(`../claude_code_o11y`) without editing it. Everything here stays in this repo.
+(`../claude_code_o11y`) without editing it. The override + scoring code stay in this
+repo; the only file that lives outside it is the deployer's `.env` (secrets +
+`COMPOSE_FILE`), which Compose requires in the stack dir — see Deploy below.
 
 ## What gets added
 
@@ -26,65 +28,99 @@ Grafana then aggregates the `claude-code-scores` stream at query time (LogQL `| 
 
 ## Deploy
 
-This repo must be cloned as a **sibling of the stack repo, named exactly
+This repo must be cloned as a **sibling of the stack dir, named exactly
 `claude_code_o11y_llm`** — the override's `../claude_code_o11y_llm/...` paths
 resolve against the stack's compose dir, so only *our* dir name matters (the stack
 dir can be named anything, e.g. `observability`). `$STACK` below is that stack dir.
 
-```bash
-# 1. config the scorer
-cd .../claude_code_o11y_llm/deploy && cp .env.example .env   # set ANTHROPIC_API_KEY
+> **Where `.env` goes:** Compose reads `.env` from the directory you run it in
+> (`$STACK`), **not** from this repo's `deploy/` folder. So the scorer's config
+> lives in **`$STACK/.env`** — use this repo's `deploy/.env.example` as the template.
+> Setting `COMPOSE_FILE` there also makes plain `docker compose` from `$STACK`
+> auto-merge both files, so you never have to type `-f` again (for up, down,
+> restart, logs, config, run — everything).
 
-# 2. from the stack dir, FIRST render the merged config (read-only) and eyeball that
-#    grafana keeps its base volumes (grafana_data + provisioning) PLUS our 2 mounts:
+```bash
+# 1. config: create $STACK/.env from the template, then add COMPOSE_FILE so every
+#    `docker compose` from $STACK merges the stack + the scorer override automatically.
+cp .../claude_code_o11y_llm/deploy/.env.example "$STACK/.env"
+printf '\nCOMPOSE_FILE=docker-compose.yml:../claude_code_o11y_llm/deploy/docker-compose.scorer.yml\n' >> "$STACK/.env"
+$EDITOR "$STACK/.env"     # set ANTHROPIC_API_KEY (or SCORER_ARGS=--dry-run to start keyless)
+
+# 2. from the stack dir, render the merged config (read-only) and eyeball that grafana
+#    keeps its base volumes (grafana_data + provisioning) PLUS our 2 scoring mounts:
 cd "$STACK"
-docker compose -f docker-compose.yml \
-  -f ../claude_code_o11y_llm/deploy/docker-compose.scorer.yml config | less
+docker compose config | less     # COMPOSE_FILE makes -f unnecessary
 
 # 3. apply: builds the scorer image, recreates grafana with the scoring dashboard
-#    (brief grafana blip), leaves the other services untouched.
-docker compose -f docker-compose.yml \
-  -f ../claude_code_o11y_llm/deploy/docker-compose.scorer.yml up -d --build
+#    (brief grafana blip), runs the scorer once (restart:"no" job), leaves the rest.
+docker compose up -d --build
 
 # 4. confirm the dashboard provider landed inside the nested provisioning mount:
 docker exec grafana ls /etc/grafana/provisioning/dashboards/
 ```
 
+Project name defaults to the stack dir's basename (so volumes are `<stackdir>_loki_data`
+etc.) — run compose from `$STACK` so it stays stable.
+
 ## Run the job
 
-```bash
-# from the stack dir ($STACK), same -f pair. First time, prove connectivity offline:
-docker compose -f docker-compose.yml \
-  -f ../claude_code_o11y_llm/deploy/docker-compose.scorer.yml \
-  run --rm -e SCORER_ARGS=--dry-run scorer        # fetch -> stub score -> push, no API key
+With `COMPOSE_FILE` in `$STACK/.env`, every command from `$STACK` already merges
+both files — no `-f` needed.
 
-# then the real judge:
-docker compose -f docker-compose.yml \
-  -f ../claude_code_o11y_llm/deploy/docker-compose.scorer.yml \
-  run --rm scorer
+```bash
+# first time, prove the pipeline offline (no API key): fetch -> stub score -> push
+docker compose run --rm -e SCORER_ARGS=--dry-run scorer
+
+# real judge (needs ANTHROPIC_API_KEY in $STACK/.env):
+docker compose run --rm scorer
 ```
 
-The job preflights Loki connectivity (`--probe`) and aborts cleanly if
-`loki:3100` is unreachable, before doing any work.
+`docker compose up -d` also fires the scorer once, since it's part of the merged
+set (it's a `restart:"no"` job: runs to completion, exits). The job preflights Loki
+connectivity (`--probe`) and aborts cleanly if `loki:3100` is unreachable. Re-runs
+are idempotent (`--skip-scored` reads the scores stream and skips prompts already
+there), so you can also schedule `docker compose run --rm scorer` with host cron as
+often as you like.
 
-Schedule it with host cron (the container is a job, not a daemon). Re-runs are
-safe: `--skip-scored` reads the scores stream and only scores prompts not already
-there, so cron can fire as often as you like.
+## Day-2 ops (up / down from the stack dir)
 
-## Knobs (`.env`)
+Once `COMPOSE_FILE` is set, the stack folder behaves normally — just **never**
+`down -v`, which would also drop `grafana_data` + `caddy_data` (TLS certs):
+
+```bash
+docker compose up -d        # stack + dashboard + one scorer run
+docker compose down         # safe: removes containers/network, KEEPS all named volumes
+```
+
+To wipe data for a test cycle, target the two volumes explicitly (keeps Grafana +
+Caddy intact):
+
+```bash
+docker compose down
+docker volume rm <stackdir>_loki_data <stackdir>_prometheus_data
+docker compose up -d
+```
+
+## Knobs (`$STACK/.env`)
+
+Lives in the **stack dir**, not this repo's `deploy/`. Template: `deploy/.env.example`.
 
 | var | default | meaning |
 |-----|---------|---------|
+| `COMPOSE_FILE` | — | set to `docker-compose.yml:../claude_code_o11y_llm/deploy/docker-compose.scorer.yml` so plain `docker compose` auto-merges both |
 | `ANTHROPIC_API_KEY` | — | judge key; omit only with `SCORER_ARGS=--dry-run` |
 | `LOKI_PUSH_URL` / `LOKI_QUERY_URL` | `http://loki:3100` | one host; query falls back to push |
 | `SCORER_ARGS` | — | `--dry-run` uses the offline stub (no key) |
+| `PROBE` | `1` | `0` = skip the Loki connectivity preflight |
 | `FETCH` | `1` | `0` = skip HTTP fetch, score a pre-mounted `data/raw` |
 | `SKIP_SCORED` | `1` | `0` = re-score everything in the window |
 
 ## Verify on first deploy
 
 - Grafana's base volumes (`grafana_data`, base provisioning) survive the override
-  merge — the override only *appends* the scoring dashboard mounts.
+  merge — **confirmed** via `docker compose config`: Compose *concatenates*
+  `grafana.volumes`, so the 2 base mounts + our 2 scoring mounts all render.
 - Container egress to `api.anthropic.com:443` (host-level already returns 401).
 - A first `--dry-run` job end-to-end (fetch → stub score → push), then check the
   `claude-code-scores` stream in Grafana before switching the judge on.
