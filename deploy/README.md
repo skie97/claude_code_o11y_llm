@@ -156,6 +156,7 @@ Lives in the **stack dir**, not this repo's `deploy/`. Template: `deploy/.env.ex
 | `SCORER_ARGS` | — | `--dry-run` uses the offline stub (no key) |
 | `PROBE` | `1` | `0` = skip the Loki connectivity preflight |
 | `FETCH` | `1` | `0` = skip HTTP fetch, score a pre-mounted `data/raw` |
+| `FETCH_DAYS` | `3` | rolling fetch window (days). Bounds each run; widen (e.g. `30`) for a first backfill or after a gap |
 | `SKIP_SCORED` | `1` | `0` = re-score everything in the window |
 
 ## Verify on first deploy

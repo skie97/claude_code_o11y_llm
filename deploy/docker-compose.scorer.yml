@@ -29,6 +29,7 @@ services:
       - SCORER_ARGS=${SCORER_ARGS:-}
       - PROBE=${PROBE:-1}
       - FETCH=${FETCH:-1}
+      - FETCH_DAYS=${FETCH_DAYS:-3}
       - SKIP_SCORED=${SKIP_SCORED:-1}
     volumes:
       # The in-cluster HTTP fetch (fetch_loki_http.py) now populates data/raw from
