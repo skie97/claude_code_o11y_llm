@@ -9,6 +9,7 @@ import json
 import unittest
 
 from push_scores_to_loki import (
+    HEALTH_STREAM,
     SCORES_STREAM,
     build_push_payload,
     prompt_ids_from_score_lines,
@@ -44,6 +45,11 @@ class BuildPushPayloadTests(unittest.TestCase):
 
     def test_empty_rows_yield_no_streams(self):
         self.assertEqual(build_push_payload([], ts_ns=1000), {"streams": []})
+
+    def test_stream_label_is_overridable_for_the_health_stream(self):
+        payload = build_push_payload([_row()], ts_ns=1000, stream=HEALTH_STREAM)
+        self.assertEqual(payload["streams"][0]["stream"], HEALTH_STREAM)
+        self.assertEqual(HEALTH_STREAM, {"service_name": "claude-code-scorer-health"})
 
 
 class PromptIdsFromScoreLinesTests(unittest.TestCase):

@@ -35,14 +35,18 @@ from analyze import PROCESSED
 
 # Only label on the scores stream; everything else is in the JSON line.
 SCORES_STREAM = {"service_name": "claude-code-scores"}
+# Separate single-line health stream: one run_status row per scorer run. Kept apart
+# from the scores stream so run-health alerts never touch score-rate aggregations.
+HEALTH_STREAM = {"service_name": "claude-code-scorer-health"}
 # Compose service DNS -- reachable from inside the stack network, which is the
 # whole point of running the scorer as a container behind Loki's (port-less) wall.
 DEFAULT_LOKI_URL = "http://loki:3100"
 PUSH_TIMEOUT = 15
 
 
-def build_push_payload(rows: list[dict], ts_ns: int) -> dict:
-    """Loki push-API body for the score rows: one JSON log line per row.
+def build_push_payload(rows: list[dict], ts_ns: int, stream: dict = SCORES_STREAM) -> dict:
+    """Loki push-API body: one JSON log line per row, under the given stream label
+    (the scores stream by default; HEALTH_STREAM for run-status rows).
 
     Timestamps increment by 1ns per row so they are strictly ascending and never
     collide within the stream, however fast the batch is assembled. An empty
@@ -53,7 +57,7 @@ def build_push_payload(rows: list[dict], ts_ns: int) -> dict:
         [str(ts_ns + i), json.dumps(row, ensure_ascii=False, sort_keys=True)]
         for i, row in enumerate(rows)
     ]
-    return {"streams": [{"stream": SCORES_STREAM, "values": values}]}
+    return {"streams": [{"stream": stream, "values": values}]}
 
 
 def prompt_ids_from_score_lines(lines: Iterable[str]) -> set[str]:
@@ -84,6 +88,15 @@ def push(payload: dict, loki_url: str, *, timeout: int = PUSH_TIMEOUT) -> None:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         resp.read()  # drain; Loki returns 204 No Content on success
+
+
+def push_run_status(row: dict, loki_url: str, *, timeout: int = PUSH_TIMEOUT) -> None:
+    """Emit a single run_status row to the health stream. Thin I/O wrapper over the
+    tested build_push_payload + push. The caller treats this as best-effort: a failed
+    health push must never mask the scorer's real exit code (if Loki is the thing
+    that's down, the non-zero exit code is the failure channel that still works)."""
+    push(build_push_payload([row], time.time_ns(), stream=HEALTH_STREAM), loki_url,
+         timeout=timeout)
 
 
 def main() -> None:

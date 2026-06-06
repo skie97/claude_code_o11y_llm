@@ -1,0 +1,103 @@
+# Grafana unified-alerting provisioning for scorer run-health.
+#
+# Fires on the claude-code-scorer-health stream the scorer writes once per run:
+#   * scorer-run-failed -- any status="failed" run in the last hour (bad JUDGE_MODEL,
+#     bad key, fatal judge error). This is the model-selection-failure trigger.
+#   * scorer-stale      -- zero runs in the last 6h (cron stopped firing).
+#
+# TWO THINGS BEFORE MOUNTING (a provisioned rule with a bad datasource UID is rejected
+# by Grafana, so don't mount this until both are done):
+#   1. Replace REPLACE_WITH_LOKI_DATASOURCE_UID below with your Loki datasource UID
+#      (Grafana -> Connections -> Data sources -> Loki -> copy the UID from the URL,
+#       or: GET /api/datasources, field `uid`).
+#   2. Wire a contact point + a nested notification route matching component="scorer"
+#      (see contactpoints.yaml.example and deploy/README.md -> Alerting). Without a
+#      route these rules still fire and show in Alerting, just with no notification.
+#
+# Then add the mount in docker-compose.scorer.yml (commented there) and `up -d`.
+# If provisioned-rule schema drift bites your Grafana version, recreate the two rules
+# in the UI from the LogQL exprs below -- they're the load-bearing part.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: scorer-health
+    folder: Scoring
+    interval: 5m
+    rules:
+      - uid: scorer-run-failed
+        title: Claude Code scorer run failed
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Alerting
+        labels:
+          severity: critical
+          component: scorer
+        annotations:
+          summary: "Claude Code scorer reported a failed run in the last hour (e.g. invalid JUDGE_MODEL or API key). Check `docker logs scorer`."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: REPLACE_WITH_LOKI_DATASOURCE_UID
+            model:
+              datasource: { type: loki, uid: REPLACE_WITH_LOKI_DATASOURCE_UID }
+              expr: 'sum(count_over_time({service_name="claude-code-scorer-health"} | json | status="failed" [1h]))'
+              queryType: instant
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+              refId: C
+
+      - uid: scorer-stale
+        title: Claude Code scorer not running (stale)
+        condition: C
+        for: 0m
+        noDataState: Alerting
+        execErrState: Alerting
+        labels:
+          severity: warning
+          component: scorer
+        annotations:
+          summary: "No Claude Code scorer run in the last 6h — the cron job may have stopped. Adjust the 6h window to your cron interval."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 21600, to: 0 }
+            datasourceUid: REPLACE_WITH_LOKI_DATASOURCE_UID
+            model:
+              datasource: { type: loki, uid: REPLACE_WITH_LOKI_DATASOURCE_UID }
+              expr: 'sum(count_over_time({service_name="claude-code-scorer-health"} [6h]))'
+              queryType: instant
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              datasource: { type: __expr__, uid: __expr__ }
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+              refId: C

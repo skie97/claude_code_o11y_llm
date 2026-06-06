@@ -1,0 +1,117 @@
+{
+  "title": "Claude Code — Scorer Health",
+  "uid": "claude-scorer-health",
+  "tags": ["claude-code", "scoring", "health"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Loki",
+        "type": "datasource",
+        "query": "loki",
+        "hide": 0,
+        "current": {},
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Failed runs (range)",
+      "description": "Scorer runs that reported status=failed (e.g. a bad JUDGE_MODEL). Should be 0.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum(count_over_time({service_name=\"claude-code-scorer-health\"} | json | status=\"failed\" [$__range]))",
+          "queryType": "instant"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total runs (range)",
+      "description": "Scorer runs of any status. 0 over a window longer than your cron interval means the job stopped firing (staleness).",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "green", "value": 1 }
+          ] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum(count_over_time({service_name=\"claude-code-scorer-health\"} | json [$__range]))",
+          "queryType": "instant"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Prompts scored / skipped per run",
+      "description": "Per-run scored and skipped counts over time. A run with scored=0 is a red flag even if it didn't hard-fail.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "points", "pointSize": 6, "fillOpacity": 0 } } },
+      "targets": [
+        {
+          "refId": "Scored",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum_over_time({service_name=\"claude-code-scorer-health\"} | json | unwrap scored [$__auto])",
+          "queryType": "range",
+          "legendFormat": "scored"
+        },
+        {
+          "refId": "Skipped",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum_over_time({service_name=\"claude-code-scorer-health\"} | json | unwrap skipped [$__auto])",
+          "queryType": "range",
+          "legendFormat": "skipped"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "logs",
+      "title": "Recent scorer runs (raw status events)",
+      "description": "The claude-code-scorer-health stream: status, judge_model, scored, skipped, reason.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 8 },
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "{service_name=\"claude-code-scorer-health\"}",
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

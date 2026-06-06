@@ -53,6 +53,13 @@ from model_scoring import (
     assess_from_verdict,
 )
 from project_attribution import project_by_session, session_of_prompt
+from scorer_status import (
+    STATUS_FAILED,
+    STATUS_OK,
+    JudgeModelError,
+    build_run_status,
+    is_fatal_judge_error,
+)
 
 TOOL_DECISION = "tool_decision"
 RATE_LIMIT_SECONDS = 0.5  # handover: don't hammer the API between judge calls
@@ -192,6 +199,21 @@ def make_claude_judge(thinking: bool = True):
 
     client = anthropic.Anthropic()
 
+    # Preflight the judge model BEFORE the loop: a bad JUDGE_MODEL / key fails
+    # identically for every prompt, so catch it here for $0 (models.retrieve runs no
+    # inference) and a clear message, instead of 404-ing once per prompt. Only the
+    # config errors (not-found / auth / permission) are fatal; a transient blip here
+    # is ignored so the run still proceeds (the loop has its own error handling).
+    try:
+        client.models.retrieve(JUDGE_MODEL)
+    except (anthropic.NotFoundError, anthropic.AuthenticationError,
+            anthropic.PermissionDeniedError) as exc:
+        raise JudgeModelError(
+            f"judge model {JUDGE_MODEL!r} unusable (check JUDGE_MODEL / ANTHROPIC_API_KEY): {exc}"
+        ) from exc
+    except Exception as exc:  # transient preflight failure -> warn, let the loop run
+        print(f"[score] judge-model preflight inconclusive ({exc}); proceeding", file=sys.stderr)
+
     def judge(pair: dict, tel: dict) -> JudgeVerdict:
         kwargs = dict(
             model=JUDGE_MODEL,
@@ -251,10 +273,16 @@ def score_all(pairs: list[dict], telemetry: dict[str, dict], judge, *, rate_limi
         try:
             verdict = judge(pair, tel)
             assessment = assess_from_verdict(verdict, pair["model"])
-        except UnknownModelError as exc:
+        except UnknownModelError as exc:  # the JUDGED model is unknown -- per-prompt, skip
             print(f"  skip {pair['prompt_id']}: {exc}", file=sys.stderr)
             continue
-        except Exception as exc:  # one bad prompt must never crash the loop (handover)
+        except Exception as exc:
+            # A config error (bad judge model / key, or a mid-run model retirement)
+            # fails every prompt the same way -> abort the run loudly. Only a transient
+            # error or one bad prompt is skipped, so the loop never silently drops all.
+            if is_fatal_judge_error(exc):
+                raise JudgeModelError(
+                    f"fatal judge error on {pair['prompt_id']}: {exc}") from exc
             print(f"  skip {pair['prompt_id']}: judge failed: {exc}", file=sys.stderr)
             continue
         cost_usd = round(tel["cost_usd"], 6)
@@ -322,6 +350,26 @@ def drop_already_scored(pairs: list[dict], records: list[dict]) -> list[dict]:
     return kept
 
 
+def emit_run_status(*, emit: bool, dry_run: bool, judge_model: str,
+                    scored: int, skipped: int, status: str, reason: str | None = None) -> None:
+    """Always print the run-status; push it to the health stream too when --emit-status
+    is set (the deployed job). Best-effort: a failed health push is logged but never
+    changes the scorer's exit code -- if Loki is the thing that's down, the non-zero
+    exit (channel 1) is the failure signal that still works."""
+    row = build_run_status(status=status, judge_model=judge_model, scored=scored,
+                           skipped=skipped, dry_run=dry_run, reason=reason)
+    print(f"[score] run-status: {row}")
+    if not emit:
+        return
+    loki_url = os.environ.get("LOKI_PUSH_URL", "http://loki:3100")
+    try:
+        from push_scores_to_loki import push_run_status
+        push_run_status(row, loki_url)
+        print(f"[score] pushed run-status ({status}) to {loki_url}")
+    except Exception as exc:
+        print(f"[score] run-status push failed ({exc})", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",
@@ -331,6 +379,9 @@ def main() -> None:
     parser.add_argument("--skip-scored", action="store_true",
                         help="skip prompt_ids already in the claude-code-scores stream "
                              "(idempotent re-runs; queries LOKI_QUERY_URL)")
+    parser.add_argument("--emit-status", action="store_true",
+                        help="push a run_status row to the claude-code-scorer-health "
+                             "Loki stream (for the Grafana run-health alert)")
     args = parser.parse_args()
 
     records = load_records(RAW)
@@ -345,14 +396,24 @@ def main() -> None:
         pair["title"] = titles.get(pair["prompt_id"])
         pair["project"] = projects.get(sessions.get(pair["prompt_id"], ""), ("unknown", ""))[0]
 
-    if args.dry_run:
-        judge, rate_limit = stub_judge, 0.0
-        print(f"[score] dry-run stub judge over {len(pairs)} prompts")
-    else:
-        judge, rate_limit = make_claude_judge(thinking=not args.no_thinking), RATE_LIMIT_SECONDS
-        print(f"[score] Claude judge ({JUDGE_MODEL}) over {len(pairs)} prompts")
-
-    scores = score_all(pairs, telemetry, judge, rate_limit=rate_limit)
+    judge_model = "stub" if args.dry_run else JUDGE_MODEL
+    try:
+        if args.dry_run:
+            judge, rate_limit = stub_judge, 0.0
+            print(f"[score] dry-run stub judge over {len(pairs)} prompts")
+        else:
+            # make_claude_judge preflights JUDGE_MODEL -> JudgeModelError on bad config.
+            judge, rate_limit = make_claude_judge(thinking=not args.no_thinking), RATE_LIMIT_SECONDS
+            print(f"[score] Claude judge ({JUDGE_MODEL}) over {len(pairs)} prompts")
+        scores = score_all(pairs, telemetry, judge, rate_limit=rate_limit)
+    except JudgeModelError as exc:
+        # Config error: every prompt would fail the same way. Emit a failed run-status
+        # (so Grafana can alert) and exit non-zero (so cron/Docker catch it) -- never
+        # write an empty model_scores.json and pretend success.
+        emit_run_status(emit=args.emit_status, dry_run=args.dry_run, judge_model=judge_model,
+                        scored=0, skipped=len(pairs), status=STATUS_FAILED, reason=str(exc))
+        print(f"[score] FATAL: {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
     PROCESSED.mkdir(parents=True, exist_ok=True)
     out = PROCESSED / "model_scores.json"
@@ -360,6 +421,8 @@ def main() -> None:
                    encoding="utf-8")
     print_report(scores)
     print(f"\nWrote {out}")
+    emit_run_status(emit=args.emit_status, dry_run=args.dry_run, judge_model=judge_model,
+                    scored=len(scores), skipped=len(pairs) - len(scores), status=STATUS_OK)
 
 
 if __name__ == "__main__":

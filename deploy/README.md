@@ -83,6 +83,44 @@ are idempotent (`--skip-scored` reads the scores stream and skips prompts alread
 there), so you can also schedule `docker compose run --rm scorer` with host cron as
 often as you like.
 
+## Failure handling & alerting
+
+A bad `JUDGE_MODEL` (or key) is a **config** error — it fails identically for every
+prompt. The scorer treats it as fatal: it preflights the model (`models.retrieve`,
+no inference) before scoring, aborts **non-zero** with a clear message, and never
+writes an empty `model_scores.json` and exits 0. The failure surfaces on **two
+independent channels** (deliberately — the error must not travel through whatever is
+down):
+
+1. **Exit code (dependency-free, primary).** The job exits non-zero → visible in
+   `docker logs scorer`, to Docker, and to cron. This is the channel that still works
+   when Loki itself is down. Wire a cron notification on it:
+   ```cron
+   0 * * * *  cd ~/observability && docker compose run --rm scorer >> ~/scorer.log 2>&1 || \
+              echo "scorer FAILED $(date)" | mail -s "Claude scorer failed" you@example.com
+   ```
+
+2. **Loki health event → Grafana alert (dashboard/notify).** Every run pushes one
+   `run_status` row (`--emit-status`) to a separate stream `claude-code-scorer-health`
+   (`status` ok/failed, `judge_model`, `scored`, `skipped`, `reason`). The
+   **Scorer Health** dashboard (auto-provisioned) visualizes it; the alert rules in
+   `grafana-scoring/alerting/scorer-alerts.yaml` fire on `status="failed"` (last hour)
+   or zero runs in 6h (stale cron).
+
+   To enable the alert (opt-in — a provisioned rule with a bad datasource UID is
+   rejected, so it isn't mounted by default):
+   1. In `scorer-alerts.yaml`, replace `REPLACE_WITH_LOKI_DATASOURCE_UID` with your
+      Loki UID (Grafana → Connections → Loki → UID, or `GET /api/datasources`).
+   2. `cp grafana-scoring/alerting/contactpoints.yaml.example .../contactpoints.yaml`
+      and set a real destination (safe — adding a contact point touches nothing else).
+   3. Uncomment the `alerting` mount in `docker-compose.scorer.yml`, `up -d`, then in
+      Grafana add a **nested** notification route matching `component = scorer` →
+      `scorer-oncall`. (Don't provision a root policy — it would hijack routing for
+      every other alert on this shared Grafana.)
+
+   If provisioned-rule schema drift bites your Grafana version, just recreate the two
+   rules in the UI from the LogQL in that file — the queries are the load-bearing part.
+
 ## Day-2 ops (up / down from the stack dir)
 
 Once `COMPOSE_FILE` is set, the stack folder behaves normally — just **never**

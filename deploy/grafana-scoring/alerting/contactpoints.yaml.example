@@ -1,0 +1,19 @@
+# Contact point for scorer alerts. Copy to contactpoints.yaml, fill in a real
+# destination, and mount it alongside scorer-alerts.yaml.
+#
+# SAFE TO PROVISION: adding a contact point does not touch existing alerts.
+# DO NOT provision a root notification *policy* here — Grafana provisioning replaces
+# the whole policy tree, which would hijack routing for every other alert on this
+# shared Grafana. Instead, after this contact point exists, add a NESTED route in the
+# UI (Alerting -> Notification policies -> New nested policy) matching
+# `component = scorer` -> receiver `scorer-oncall`. See deploy/README.md -> Alerting.
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: scorer-oncall
+    receivers:
+      - uid: scorer-oncall-1
+        type: email          # or: slack, webhook, pagerduty, ...
+        settings:
+          addresses: you@example.com
+        disableResolveMessage: false

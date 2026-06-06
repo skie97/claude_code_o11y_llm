@@ -34,7 +34,10 @@ fi
 SKIP_ARG=""
 [ "${SKIP_SCORED:-1}" = "1" ] && SKIP_ARG="--skip-scored"
 
+# --emit-status: push a run_status row to the claude-code-scorer-health stream so
+# the Grafana run-health alert can fire on a failed run (e.g. a bad JUDGE_MODEL).
+# set -e means a fatal config error here (non-zero exit) aborts before the push below.
 # Unquoted SCORER_ARGS on purpose: empty must expand to no argument; "--dry-run"
 # must word-split into a flag.
-python scripts/score_model_fit.py $SKIP_ARG ${SCORER_ARGS:-}
+python scripts/score_model_fit.py $SKIP_ARG --emit-status ${SCORER_ARGS:-}
 python scripts/push_scores_to_loki.py
