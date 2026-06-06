@@ -23,6 +23,7 @@ services:
     container_name: scorer
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - JUDGE_MODEL=${JUDGE_MODEL:-claude-sonnet-4-6}
       - LOKI_PUSH_URL=${LOKI_PUSH_URL:-http://loki:3100}
       - LOKI_QUERY_URL=${LOKI_QUERY_URL:-http://loki:3100}
       - SCORER_ARGS=${SCORER_ARGS:-}

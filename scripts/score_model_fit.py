@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -55,7 +56,13 @@ from project_attribution import project_by_session, session_of_prompt
 
 TOOL_DECISION = "tool_decision"
 RATE_LIMIT_SECONDS = 0.5  # handover: don't hammer the API between judge calls
-JUDGE_MODEL = "claude-opus-4-8"
+# The judge model. Sonnet 4.6 by default: this is a bounded, rubric-driven
+# classification/judgment (task + complexity + recommended tier), not open-ended
+# reasoning -- well within Sonnet's range, ~1.67x cheaper than Opus, and consistent
+# with the project's own thesis (don't over-provision the judge). PINNED, not floating:
+# the verdict IS the score, so a model change must be deliberate + re-validated (A/B),
+# never silent drift. Override with JUDGE_MODEL when you deliberately upgrade.
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "claude-sonnet-4-6")
 HOUR_PAD_NS = 3600 * 1_000_000_000  # pad the --skip-scored query window an hour each side
 
 SYSTEM_PROMPT = """\

@@ -110,6 +110,7 @@ Lives in the **stack dir**, not this repo's `deploy/`. Template: `deploy/.env.ex
 |-----|---------|---------|
 | `COMPOSE_FILE` | — | set to `docker-compose.yml:../claude_code_o11y_llm/deploy/docker-compose.scorer.yml` so plain `docker compose` auto-merges both |
 | `ANTHROPIC_API_KEY` | — | judge key; omit only with `SCORER_ARGS=--dry-run` |
+| `JUDGE_MODEL` | `claude-sonnet-4-6` | judge model (pinned — upgrade deliberately + re-validate, don't float to "latest") |
 | `LOKI_PUSH_URL` / `LOKI_QUERY_URL` | `http://loki:3100` | one host; query falls back to push |
 | `SCORER_ARGS` | — | `--dry-run` uses the offline stub (no key) |
 | `PROBE` | `1` | `0` = skip the Loki connectivity preflight |
