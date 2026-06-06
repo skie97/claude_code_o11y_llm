@@ -108,11 +108,14 @@ down):
    or zero runs in 6h (stale cron).
 
    To enable the alert (opt-in — a provisioned rule with a bad datasource UID is
-   rejected, so it isn't mounted by default):
-   1. In `scorer-alerts.yaml`, replace `REPLACE_WITH_LOKI_DATASOURCE_UID` with your
-      Loki UID (Grafana → Connections → Loki → UID, or `GET /api/datasources`).
-   2. `cp grafana-scoring/alerting/contactpoints.yaml.example .../contactpoints.yaml`
-      and set a real destination (safe — adding a contact point touches nothing else).
+   rejected, so it isn't mounted by default). Both filled files are **gitignored** —
+   they carry your deployment's UID / destinations, so they stay box-local:
+   1. `cp scorer-alerts.yaml.example scorer-alerts.yaml` and replace
+      `REPLACE_WITH_LOKI_DATASOURCE_UID` with your Loki UID (Grafana → Connections →
+      Loki → UID, or `GET /api/datasources`). Grafana loads only `*.yaml`, so the
+      `.example` template is ignored.
+   2. `cp contactpoints.yaml.example contactpoints.yaml` and set a real destination
+      (safe — adding a contact point touches nothing else).
    3. Uncomment the `alerting` mount in `docker-compose.scorer.yml`, `up -d`, then in
       Grafana add a **nested** notification route matching `component = scorer` →
       `scorer-oncall`. (Don't provision a root policy — it would hijack routing for

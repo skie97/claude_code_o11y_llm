@@ -47,7 +47,8 @@ services:
     volumes:
       - ../claude_code_o11y_llm/deploy/grafana-scoring/scoring-provider.yaml:/etc/grafana/provisioning/dashboards/scoring-provider.yaml:ro
       - ../claude_code_o11y_llm/deploy/grafana-scoring/dashboards:/var/lib/grafana/dashboards/scoring:ro
-      # Run-health alerting — OPT-IN. Uncomment ONLY after editing scorer-alerts.yaml
-      # (real Loki datasource UID) + adding contactpoints.yaml; a provisioned rule with
-      # a placeholder UID is rejected by Grafana. See deploy/README.md -> Alerting.
+      # Run-health alerting — OPT-IN. Uncomment ONLY after creating scorer-alerts.yaml
+      # + contactpoints.yaml from their .example templates (real Loki datasource UID /
+      # destination; both gitignored). A provisioned rule with the placeholder UID is
+      # rejected by Grafana. See deploy/README.md -> Alerting.
       # - ../claude_code_o11y_llm/deploy/grafana-scoring/alerting:/etc/grafana/provisioning/alerting:ro

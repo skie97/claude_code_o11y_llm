@@ -14,6 +14,11 @@ HANDOVER-scoring-pipeline.md
 # Secrets — real API keys for the scorer container (.env.example is committed)
 .env
 
+# Filled-in Grafana alerting — carry a deployment-specific Loki datasource UID and
+# real notification destinations; box-local only (the *.example templates are committed)
+deploy/grafana-scoring/alerting/scorer-alerts.yaml
+deploy/grafana-scoring/alerting/contactpoints.yaml
+
 # Python
 __pycache__/
 *.pyc
