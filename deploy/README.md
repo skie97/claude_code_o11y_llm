@@ -41,10 +41,10 @@ dir can be named anything, e.g. `observability`). `$STACK` below is that stack d
 > restart, logs, config, run — everything).
 
 ```bash
-# 1. config: create $STACK/.env from the template, then add COMPOSE_FILE so every
-#    `docker compose` from $STACK merges the stack + the scorer override automatically.
+# 1. config: copy the template to $STACK/.env and set the key. The template already
+#    carries COMPOSE_FILE (so plain `docker compose` from $STACK merges the stack +
+#    the scorer override automatically) — just confirm its relative path fits your layout.
 cp .../claude_code_o11y_llm/deploy/.env.example "$STACK/.env"
-printf '\nCOMPOSE_FILE=docker-compose.yml:../claude_code_o11y_llm/deploy/docker-compose.scorer.yml\n' >> "$STACK/.env"
 $EDITOR "$STACK/.env"     # set ANTHROPIC_API_KEY (or SCORER_ARGS=--dry-run to start keyless)
 
 # 2. from the stack dir, render the merged config (read-only) and eyeball that grafana
