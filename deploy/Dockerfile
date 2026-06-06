@@ -5,6 +5,12 @@
 # `context: ../claude_code_o11y_llm` for exactly this reason.
 FROM python:3.12-slim
 
+# Unbuffered stdout/stderr so `docker logs -f scorer` streams each stage's progress
+# live. Without this, Python block-buffers stdout when piped (not a TTY), so the
+# score/push prints stay invisible until the job exits — making a long real-judge
+# run look hung when it is actually working.
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 COPY deploy/requirements.txt /app/requirements.txt
