@@ -1,0 +1,17 @@
+## Grafana dashboard provider for the model-fit scoring dashboard.
+## Mounted by docker-compose.scorer.yml into the running Grafana's provisioning
+## tree. The companion stack already provisions the Loki datasource, so this
+## adds only the dashboard.
+apiVersion: 1
+
+providers:
+  - name: scoring
+    orgId: 1
+    folder: Scoring
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      # Dashboards are mounted here by the compose override (see that file).
+      path: /var/lib/grafana/dashboards/scoring
+      foldersFromFilesStructure: false

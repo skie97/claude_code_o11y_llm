@@ -1,0 +1,48 @@
+# Compose OVERRIDE — layered on top of the PUBLIC stack's docker-compose.yml.
+# Keeps the entire LLM-judge scoring layer in this (private) repo; the public
+# stack repo is never touched.
+#
+# Run from the STACK's compose directory (the dir holding the stack docker-compose.yml;
+# any directory name works) so its relative paths resolve. This repo must be a sibling
+# named exactly `claude_code_o11y_llm`:
+#
+#   cd <your stack dir>
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f ../claude_code_o11y_llm/deploy/docker-compose.scorer.yml \
+#     up -d
+#
+# Compose resolves ALL relative paths against the project directory (the first
+# -f file's dir = the stack repo), which is why every host path below is written
+# ../claude_code_o11y_llm/... — relative to the stack repo, not to this file.
+services:
+  scorer:
+    build:
+      context: ../claude_code_o11y_llm   # repo root, so the image can COPY scripts/
+      dockerfile: deploy/Dockerfile
+    container_name: scorer
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LOKI_PUSH_URL=${LOKI_PUSH_URL:-http://loki:3100}
+      - LOKI_QUERY_URL=${LOKI_QUERY_URL:-http://loki:3100}
+      - SCORER_ARGS=${SCORER_ARGS:-}
+      - PROBE=${PROBE:-1}
+      - FETCH=${FETCH:-1}
+      - SKIP_SCORED=${SKIP_SCORED:-1}
+    volumes:
+      # The in-cluster HTTP fetch (fetch_loki_http.py) now populates data/raw from
+      # loki:3100 at run time, so this mount is just a persistent cache / an escape
+      # hatch for FETCH=0 (run against a pre-supplied dump).
+      - ../claude_code_o11y_llm/data:/app/data
+    restart: "no"          # run-to-completion job — schedule via host cron / `docker compose run scorer`
+    depends_on:
+      - loki
+
+  # Mount the scoring dashboard into the already-running Grafana. Compose merges
+  # (appends) these onto the base grafana service's volumes; verify the base
+  # grafana_data + provisioning mounts survive after first `up` (compose should
+  # concatenate volume lists, but confirm on the box).
+  grafana:
+    volumes:
+      - ../claude_code_o11y_llm/deploy/grafana-scoring/scoring-provider.yaml:/etc/grafana/provisioning/dashboards/scoring-provider.yaml:ro
+      - ../claude_code_o11y_llm/deploy/grafana-scoring/dashboards:/var/lib/grafana/dashboards/scoring:ro

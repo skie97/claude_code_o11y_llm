@@ -1,0 +1,9 @@
+# Scorer container dependencies. Everything else the scripts use is stdlib
+# (json, urllib, argparse, dataclasses) — no requests, no extra HTTP client.
+#
+# The judge uses the official Anthropic SDK with structured output
+# (client.messages.parse(output_format=...)) + adaptive thinking on
+# claude-opus-4-8, which need a recent SDK. Pin to the resolved version after
+# the first successful build for reproducibility.
+anthropic
+pydantic

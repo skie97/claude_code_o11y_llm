@@ -1,0 +1,206 @@
+{
+  "title": "Claude Code — Model Fit & Leaderboard",
+  "uid": "claude-model-fit",
+  "tags": ["claude-code", "scoring"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-7d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Loki",
+        "type": "datasource",
+        "query": "loki",
+        "hide": 0,
+        "current": {},
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Prompts scored",
+      "description": "Count of scored prompts in the selected range.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum(count_over_time({service_name=\"claude-code-scores\"} | json [$__range]))",
+          "queryType": "instant"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Cost-weighted over-provision rate",
+      "description": "Share of total spend that went to prompts where a cheaper model would have done. Σ cost(over_provisioned) / Σ cost(all).",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.25 },
+            { "color": "red", "value": 0.5 }
+          ] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum(sum_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" | unwrap cost_usd [$__range])) / sum(sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range]))",
+          "queryType": "instant"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Cost-weighted under-provision rate",
+      "description": "Share of total spend on prompts that warranted a stronger model (quality risk). Σ cost(under_provisioned) / Σ cost(all).",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 0.0001 }
+          ] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum(sum_over_time({service_name=\"claude-code-scores\"} | json | fit=\"under_provisioned\" | unwrap cost_usd [$__range])) / sum(sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range]))",
+          "queryType": "instant"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "piechart",
+      "title": "Fit mix (prompt counts)",
+      "description": "Right-sized vs over- vs under-provisioned, by prompt count.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (fit) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range]))",
+          "queryType": "instant",
+          "legendFormat": "{{fit}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Cost-weighted over-provision rate by developer",
+      "description": "Trend of each developer's over-provision rate, weighted by spend.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 18, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true } } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" | unwrap cost_usd [$__auto])) / sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__auto]))",
+          "queryType": "range",
+          "legendFormat": "{{email}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Leaderboard by developer",
+      "description": "Per developer: prompts scored, cost-weighted mean appropriateness, and right/over/under counts. Sort by mean appropriateness (or under-count) — not by cost — so the board rewards right-sizing, not low volume.",
+      "datasource": { "type": "loki", "uid": "${datasource}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Mean appropriateness", "desc": true }] },
+      "targets": [
+        {
+          "refId": "Prompts",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range]))",
+          "queryType": "instant"
+        },
+        {
+          "refId": "MeanAppropriateness",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap weighted_by_cost [$__range])) / sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range]))",
+          "queryType": "instant"
+        },
+        {
+          "refId": "RightSized",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"right_sized\" [$__range]))",
+          "queryType": "instant"
+        },
+        {
+          "refId": "OverProvisioned",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" [$__range]))",
+          "queryType": "instant"
+        },
+        {
+          "refId": "UnderProvisioned",
+          "datasource": { "type": "loki", "uid": "${datasource}" },
+          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"under_provisioned\" [$__range]))",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "email", "mode": "outer" } },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "email": "Developer",
+              "Value #Prompts": "Prompts",
+              "Value #MeanAppropriateness": "Mean appropriateness",
+              "Value #RightSized": "Right-sized",
+              "Value #OverProvisioned": "Over-provisioned",
+              "Value #UnderProvisioned": "Under-provisioned"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Mean appropriateness" },
+            "properties": [
+              { "id": "unit", "value": "none" },
+              { "id": "decimals", "value": 3 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "red", "value": null },
+                { "color": "yellow", "value": 0.8 },
+                { "color": "green", "value": 0.95 }
+              ] } }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

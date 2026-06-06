@@ -1,0 +1,19 @@
+# Secrets — never commit SSH keys
+*.pem
+
+# Downloaded log dumps contain real prompts/responses (sensitive)
+data/
+
+# Internal working docs — kept local, not published (carry real infra/identifiers)
+CLAUDE.md
+HANDOVER-scoring-pipeline.md
+
+# Machine-local config (real SSH host/key for download_loki_data.sh)
+*.env.local
+
+# Secrets — real API keys for the scorer container (.env.example is committed)
+.env
+
+# Python
+__pycache__/
+*.pyc
