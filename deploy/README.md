@@ -144,14 +144,28 @@ down):
       Loki → UID, or `GET /api/datasources`). Grafana loads only `*.yaml`, so the
       `.example` template is ignored.
    2. `cp contactpoints.yaml.example contactpoints.yaml` and set a real destination
-      (safe — adding a contact point touches nothing else).
-   3. Uncomment the `alerting` mount in `docker-compose.scorer.yml`, `up -d`, then in
-      Grafana add a **nested** notification route matching `component = scorer` →
-      `scorer-oncall`. (Don't provision a root policy — it would hijack routing for
-      every other alert on this shared Grafana.)
+      (safe — adding a contact point touches nothing else). **Use Slack/webhook, not
+      email:** plain Grafana has no SMTP, so an `email` contact point silently fails
+      (`SMTP not configured`) and the firing alert errors on every eval. The template
+      defaults to a Slack incoming webhook — paste your `hooks.slack.com/...` URL.
+   3. Uncomment the `alerting` mount in `docker-compose.scorer.yml`, then reload Grafana
+      so it provisions the rules + contact point: `docker compose up -d` (recreates
+      grafana) or `docker compose restart grafana`. Finally, in Grafana add a **nested**
+      notification route matching `component = scorer` → `scorer-oncall`
+      (Alerting → Notification policies → New nested policy). Without the route the
+      rules still fire and show on the dashboard, but notifications fall through to the
+      root default policy (the `grafana-default-email` no-SMTP dead end). **Don't
+      provision a root policy** — it would hijack routing for every other alert on this
+      shared Grafana, which is why this one step is UI-only by design.
 
    If provisioned-rule schema drift bites your Grafana version, just recreate the two
    rules in the UI from the LogQL in that file — the queries are the load-bearing part.
+
+   **Verify it's actually delivering** (not just firing): on the box,
+   `docker logs grafana 2>&1 | grep -iE 'ngalert|alertmanager' | tail` — a working
+   route shows `Sending alerts to local notifier` followed by a successful notify,
+   *not* `SMTP not configured`. The `scorer-stale` rule is a good live test: it fires
+   whenever there's been no run in 6h and self-resolves on the next successful run.
 
 ## Day-2 ops (up / down from the stack dir)
 

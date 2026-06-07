@@ -7,13 +7,36 @@
 # shared Grafana. Instead, after this contact point exists, add a NESTED route in the
 # UI (Alerting -> Notification policies -> New nested policy) matching
 # `component = scorer` -> receiver `scorer-oncall`. See deploy/README.md -> Alerting.
+#
+# RECOMMENDED: Slack (or a generic webhook). It is self-contained — unlike `email`,
+# it needs NO SMTP server. Plain Grafana has no [smtp] configured, so an `email`
+# contact point silently fails to deliver ("SMTP not configured"); only choose email
+# if you have set up GF_SMTP_* / grafana.ini [smtp] on the stack.
 apiVersion: 1
 contactPoints:
   - orgId: 1
     name: scorer-oncall
     receivers:
+      # --- Slack incoming webhook (recommended; no SMTP needed) -----------------
+      # Create one at https://api.slack.com/messaging/webhooks, paste the URL below.
       - uid: scorer-oncall-1
-        type: email          # or: slack, webhook, pagerduty, ...
+        type: slack
         settings:
-          addresses: you@example.com
+          url: https://hooks.slack.com/services/REPLACE/WITH/YOUR_WEBHOOK
+          title: '{{ template "default.title" . }}'
+          text: '{{ template "default.message" . }}'
         disableResolveMessage: false
+
+      # --- Generic webhook alternative (Discord, Teams, PagerDuty bridge, etc.) --
+      # - uid: scorer-oncall-1
+      #   type: webhook
+      #   settings:
+      #     url: https://example.com/your-webhook-endpoint
+      #   disableResolveMessage: false
+
+      # --- Email alternative (ONLY if Grafana SMTP is configured) ----------------
+      # - uid: scorer-oncall-1
+      #   type: email
+      #   settings:
+      #     addresses: you@example.com
+      #   disableResolveMessage: false
