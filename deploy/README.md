@@ -26,6 +26,34 @@ push_scores_to_loki.py  POST one JSON row per prompt -> stream service_name="cla
 
 Grafana then aggregates the `claude-code-scores` stream at query time (LogQL `| json`).
 
+## Quick start (one command)
+
+`deploy/setup.sh` bakes in every step below — it scaffolds `$STACK/.env`, builds,
+brings the stack + scorer + dashboard up, verifies the Grafana mount, and installs
+an **idempotent host cron** so the job keeps running. Run it on the box:
+
+```bash
+# real Sonnet judge, hourly cron (prompts for ANTHROPIC_API_KEY if unset):
+bash claude_code_o11y_llm/deploy/setup.sh
+
+# prove it first, keyless + offline (no API key, runs the --dry-run stub):
+bash claude_code_o11y_llm/deploy/setup.sh --dry-run --smoke
+
+# pick a schedule / skip cron / point at a non-default stack dir:
+bash claude_code_o11y_llm/deploy/setup.sh --interval '*/30 * * * *'
+bash claude_code_o11y_llm/deploy/setup.sh --no-cron
+bash claude_code_o11y_llm/deploy/setup.sh --stack-dir /home/ubuntu/observability
+```
+
+It is **safe to re-run** (refreshes the cron line instead of duplicating it; only
+creates `$STACK/.env` if absent) — re-run it to change the interval. It never edits
+the public stack, the admin password, or domains. Two things it can only *scaffold*
+because it can't invent them: your `ANTHROPIC_API_KEY` (it prompts, or stops with the
+exact line to edit under `--no-prompt`/non-TTY) and the alerting Loki UID
+(`--with-alerting` copies the templates and prints the 2 remaining manual steps).
+
+The manual walkthrough below is the same steps, by hand, if you'd rather not use the script.
+
 ## Deploy
 
 This repo must be cloned as a **sibling of the stack dir, named exactly
@@ -80,8 +108,9 @@ docker compose run --rm scorer
 set (it's a `restart:"no"` job: runs to completion, exits). The job preflights Loki
 connectivity (`--probe`) and aborts cleanly if `loki:3100` is unreachable. Re-runs
 are idempotent (`--skip-scored` reads the scores stream and skips prompts already
-there), so you can also schedule `docker compose run --rm scorer` with host cron as
-often as you like.
+there), so it is safe to schedule `docker compose run --rm scorer` with host cron as
+often as you like. **`deploy/setup.sh` installs that cron for you** (default hourly,
+`--interval` to change) — re-running it refreshes the line rather than duplicating it.
 
 ## Failure handling & alerting
 
