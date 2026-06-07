@@ -4,7 +4,7 @@
   "tags": ["claude-code", "scoring"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5m",
   "time": { "from": "now-7d", "to": "now" },
   "templating": {
@@ -25,7 +25,7 @@
       "id": 1,
       "type": "stat",
       "title": "Prompts scored",
-      "description": "Count of scored prompts in the selected range.",
+      "description": "Count of scored prompts in the selected range. Counts DISTINCT prompt_ids (grouped first) so any duplicate score rows don't inflate it.",
       "datasource": { "type": "loki", "uid": "${datasource}" },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none" },
@@ -33,7 +33,7 @@
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum(count_over_time({service_name=\"claude-code-scores\"} | json [$__range]))",
+          "expr": "count(sum by (prompt_id) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range])))",
           "queryType": "instant"
         }
       ]
@@ -60,7 +60,7 @@
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum(sum_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" | unwrap cost_usd [$__range])) / sum(sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range]))",
+          "expr": "sum(max by (prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" | unwrap cost_usd [$__range]))) / sum(max by (prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range])))",
           "queryType": "instant"
         }
       ]
@@ -86,7 +86,7 @@
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum(sum_over_time({service_name=\"claude-code-scores\"} | json | fit=\"under_provisioned\" | unwrap cost_usd [$__range])) / sum(sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range]))",
+          "expr": "sum(max by (prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | fit=\"under_provisioned\" | unwrap cost_usd [$__range]))) / sum(max by (prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range])))",
           "queryType": "instant"
         }
       ]
@@ -103,7 +103,7 @@
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (fit) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range]))",
+          "expr": "count by (fit) (sum by (fit, prompt_id) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range])))",
           "queryType": "instant",
           "legendFormat": "{{fit}}"
         }
@@ -121,7 +121,7 @@
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" | unwrap cost_usd [$__auto])) / sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__auto]))",
+          "expr": "sum by (email) (max by (email, prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" | unwrap cost_usd [$__auto]))) / sum by (email) (max by (email, prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__auto])))",
           "queryType": "range",
           "legendFormat": "{{email}}"
         }
@@ -139,31 +139,31 @@
         {
           "refId": "Prompts",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range]))",
+          "expr": "count by (email) (sum by (email, prompt_id) (count_over_time({service_name=\"claude-code-scores\"} | json [$__range])))",
           "queryType": "instant"
         },
         {
           "refId": "MeanAppropriateness",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap weighted_by_cost [$__range])) / sum by (email) (sum_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range]))",
+          "expr": "sum by (email) (max by (email, prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | unwrap weighted_by_cost [$__range]))) / sum by (email) (max by (email, prompt_id) (max_over_time({service_name=\"claude-code-scores\"} | json | unwrap cost_usd [$__range])))",
           "queryType": "instant"
         },
         {
           "refId": "RightSized",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"right_sized\" [$__range]))",
+          "expr": "count by (email) (sum by (email, prompt_id) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"right_sized\" [$__range])))",
           "queryType": "instant"
         },
         {
           "refId": "OverProvisioned",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" [$__range]))",
+          "expr": "count by (email) (sum by (email, prompt_id) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"over_provisioned\" [$__range])))",
           "queryType": "instant"
         },
         {
           "refId": "UnderProvisioned",
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (email) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"under_provisioned\" [$__range]))",
+          "expr": "count by (email) (sum by (email, prompt_id) (count_over_time({service_name=\"claude-code-scores\"} | json | fit=\"under_provisioned\" [$__range])))",
           "queryType": "instant"
         }
       ],
