@@ -28,6 +28,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 CRON_SCHEDULE="0 * * * *"     # hourly, on the hour
 INSTALL_CRON=1
+FETCH_DAYS_VAL=1              # rolling fetch window; small so a scheduled run finishes
+                              # well under the interval (widen for a first backfill)
 DRY_RUN=0                      # keyless: SCORER_ARGS=--dry-run, key not required
 WITH_ALERTING=0
 SMOKE=0                        # run one --dry-run scorer pass after `up` to prove the pipe
@@ -42,6 +44,8 @@ Flags:
   --stack-dir DIR     The stack's compose dir (holds the base docker-compose.yml).
                       Default: $STACK_DIR env, else a sibling dir named `observability`.
   --interval 'EXPR'   Cron schedule (5-field). Default: '0 * * * *' (hourly).
+  --fetch-days N      Rolling fetch window written to $STACK/.env. Default: 1 (good for
+                      a frequent cron). Bump (e.g. 30) for a first backfill / after an outage.
   --no-cron           Deploy only; do not install/refresh the cron entry.
   --dry-run           Configure the scorer keyless (SCORER_ARGS=--dry-run); no API key needed.
   --smoke             After `up`, run one offline (--dry-run) scorer pass to prove fetch->score->push.
@@ -55,6 +59,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --stack-dir)    STACK_DIR="$2"; shift 2 ;;
     --interval)     CRON_SCHEDULE="$2"; shift 2 ;;
+    --fetch-days)   FETCH_DAYS_VAL="$2"; shift 2 ;;
     --no-cron)      INSTALL_CRON=0; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
     --smoke)        SMOKE=1; shift ;;
@@ -131,6 +136,12 @@ if ! grep -q "^COMPOSE_FILE=" "$ENV_FILE"; then
   set_env_var "COMPOSE_FILE" "docker-compose.yml:../claude_code_o11y_llm/deploy/docker-compose.scorer.yml"
 fi
 
+# Bound each run's fetch to a small rolling window so a scheduled run finishes well
+# under the cron interval (the overlap that double-judges prompts comes from runs
+# outlasting the interval). Single-sourced in $STACK/.env so manual + cron runs agree.
+say "Setting FETCH_DAYS=$FETCH_DAYS_VAL in $ENV_FILE (rolling fetch window)."
+set_env_var "FETCH_DAYS" "$FETCH_DAYS_VAL"
+
 current_key="$(sed -n 's/^ANTHROPIC_API_KEY=//p' "$ENV_FILE" | head -n1)"
 if [ "$DRY_RUN" = "1" ]; then
   say "Keyless mode (--dry-run): setting SCORER_ARGS=--dry-run; API key not required."
@@ -175,10 +186,15 @@ if [ "$WITH_ALERTING" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Build + bring the stack (incl. scorer + dashboard) up
+# 3. Build the scorer image, then bring the long-running stack + dashboard up
 # ---------------------------------------------------------------------------
-say "Building + starting the stack (docker compose up -d --build)…"
-( cd "$STACK_DIR" && "$DOCKER_BIN" compose up -d --build )
+# The scorer service is profiled (run-on-demand), so `up -d` neither starts NOR
+# builds it. Build it explicitly first (--profile scorer) so cron's `run` finds an
+# image; then `up -d` brings up the long-running services + the Grafana mounts.
+say "Building images, incl. the run-on-demand scorer (docker compose --profile scorer build)…"
+( cd "$STACK_DIR" && "$DOCKER_BIN" compose --profile scorer build )
+say "Starting the stack (Grafana dashboard + Loki; the scorer runs on demand via cron)…"
+( cd "$STACK_DIR" && "$DOCKER_BIN" compose up -d )
 
 # ---------------------------------------------------------------------------
 # 4. Verify the scoring dashboard mount landed inside Grafana
@@ -194,7 +210,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$SMOKE" = "1" ]; then
   say "Smoke run: one offline (--dry-run) scorer pass…"
-  ( cd "$STACK_DIR" && "$DOCKER_BIN" compose run --rm -e SCORER_ARGS=--dry-run scorer )
+  ( cd "$STACK_DIR" && "$DOCKER_BIN" compose --profile scorer run --rm -e SCORER_ARGS=--dry-run scorer )
 fi
 
 # ---------------------------------------------------------------------------
@@ -204,9 +220,12 @@ if [ "$INSTALL_CRON" = "1" ]; then
   # The marker lets a re-run REPLACE its own line instead of appending a duplicate.
   MARKER="# claude-code-scorer (managed by deploy/setup.sh)"
   LOG_FILE="\$HOME/scorer-cron.log"
-  # cron has a minimal env: use an absolute docker path and cd into the stack dir.
-  # -T disables pseudo-TTY allocation (cron has no TTY; without it `run` can fail).
-  CRON_CMD="cd $STACK_DIR && $DOCKER_BIN compose run --rm -T scorer >> $LOG_FILE 2>&1"
+  # Go through cron_scorer.sh: it flock-guards the run so a tick firing while the
+  # previous run is still going is SKIPPED, not overlapped (overlap double-judges
+  # prompts). Pass DOCKER_BIN explicitly — cron's PATH is minimal. `bash <script>`
+  # so no execute bit is required on the checkout.
+  WRAPPER="$SCRIPT_DIR/cron_scorer.sh"
+  CRON_CMD="DOCKER_BIN=$DOCKER_BIN bash $WRAPPER $STACK_DIR >> $LOG_FILE 2>&1"
   CRON_LINE="$CRON_SCHEDULE $CRON_CMD $MARKER"
 
   # Drop any prior managed line, keep everything else, append the fresh line.
@@ -216,7 +235,7 @@ if [ "$INSTALL_CRON" = "1" ]; then
     printf '%s\n' "$CRON_LINE"
   } | crontab -
 
-  say "Cron installed/refreshed:  $CRON_SCHEDULE  ->  docker compose run --rm scorer"
+  say "Cron installed/refreshed:  $CRON_SCHEDULE  ->  cron_scorer.sh (flock-guarded run)"
   say "  (logs append to $LOG_FILE; remove with: crontab -l | grep -vF '$MARKER' | crontab -)"
 else
   say "Skipping cron (--no-cron). The scorer ran once with 'up'; schedule it yourself or re-run without --no-cron."

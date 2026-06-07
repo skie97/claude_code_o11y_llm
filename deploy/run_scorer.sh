@@ -31,10 +31,11 @@ if [ "${FETCH:-1}" = "1" ]; then
   # Rolling window, not all-history: the scorer only scores NEW prompts (--skip-scored
   # skips everything already in the scores stream), so re-pulling a month of giant
   # response bodies every run is wasted work that grows unbounded over time. FETCH_DAYS
-  # (default 3) keeps each run's fetch bounded and fast. Widen it (e.g. 30) for a first
-  # backfill or after a long gap. // DEBT: a watermark-based incremental fetch (since
-  # last run) would be even cheaper, but the rolling window is simple and bounded.
-  python scripts/fetch_loki_http.py --days "${FETCH_DAYS:-3}"
+  # (default 1) keeps each run's fetch bounded and fast — small enough that a run finishes
+  # under the cron interval, so runs don't overlap and double-judge. Widen it (e.g. 30)
+  # for a first backfill or after a long gap. // DEBT: a watermark-based incremental fetch
+  # (since last run) would be even cheaper, but the rolling window is simple and bounded.
+  python scripts/fetch_loki_http.py --days "${FETCH_DAYS:-1}"
 fi
 
 SKIP_ARG=""

@@ -80,9 +80,11 @@ $EDITOR "$STACK/.env"     # set ANTHROPIC_API_KEY (or SCORER_ARGS=--dry-run to s
 cd "$STACK"
 docker compose config | less     # COMPOSE_FILE makes -f unnecessary
 
-# 3. apply: builds the scorer image, recreates grafana with the scoring dashboard
-#    (brief grafana blip), runs the scorer once (restart:"no" job), leaves the rest.
-docker compose up -d --build
+# 3. apply. The scorer is a profiled, run-on-demand job, so `up` neither starts NOR
+#    builds it — build it explicitly first, then bring up the long-running services
+#    (recreates grafana with the scoring dashboard; brief grafana blip).
+docker compose --profile scorer build
+docker compose up -d
 
 # 4. confirm the dashboard provider landed inside the nested provisioning mount:
 docker exec grafana ls /etc/grafana/provisioning/dashboards/
@@ -98,19 +100,28 @@ both files — no `-f` needed.
 
 ```bash
 # first time, prove the pipeline offline (no API key): fetch -> stub score -> push
-docker compose run --rm -e SCORER_ARGS=--dry-run scorer
+docker compose --profile scorer run --rm -e SCORER_ARGS=--dry-run scorer
 
 # real judge (needs ANTHROPIC_API_KEY in $STACK/.env):
-docker compose run --rm scorer
+docker compose --profile scorer run --rm scorer
 ```
 
-`docker compose up -d` also fires the scorer once, since it's part of the merged
-set (it's a `restart:"no"` job: runs to completion, exits). The job preflights Loki
-connectivity (`--probe`) and aborts cleanly if `loki:3100` is unreachable. Re-runs
-are idempotent (`--skip-scored` reads the scores stream and skips prompts already
-there), so it is safe to schedule `docker compose run --rm scorer` with host cron as
-often as you like. **`deploy/setup.sh` installs that cron for you** (default hourly,
-`--interval` to change) — re-running it refreshes the line rather than duplicating it.
+The scorer is **profiled** (`profiles: ["scorer"]`), so `docker compose up -d` does
+**not** start it — `up` would otherwise fire one unscheduled run per deploy, which then
+overlaps the cron. `run` re-enables the profile for a one-off, so the commands above (and
+the cron) still work. The job preflights Loki connectivity (`--probe`) and aborts cleanly
+if `loki:3100` is unreachable. Re-runs are idempotent (`--skip-scored` reads the scores
+stream and skips prompts already there).
+
+**Schedule via `deploy/cron_scorer.sh`, not a bare `run`.** A run can outlast the cron
+interval (it fetches giant bodies + judges every new prompt); two overlapping runs both
+read the scores stream before either pushes, so both judge + push the same prompts —
+double cost, double-counted dashboards. The wrapper `flock -n`-guards the run so an
+overlapping tick is **skipped** (exit 0; a real failure still propagates). **`deploy/setup.sh`
+installs that flock-guarded cron for you** (default hourly, `--interval` to change;
+`--fetch-days` to size the window) — re-running it refreshes the line rather than
+duplicating it. Keep the window small (`FETCH_DAYS=1`, the setup default) so a run
+finishes well under the interval.
 
 ## Failure handling & alerting
 
@@ -125,9 +136,10 @@ down):
    `docker logs scorer`, to Docker, and to cron. This is the channel that still works
    when Loki itself is down. Wire a cron notification on it:
    ```cron
-   0 * * * *  cd ~/observability && docker compose run --rm scorer >> ~/scorer.log 2>&1 || \
+   0 * * * *  DOCKER_BIN=/usr/bin/docker bash ~/claude_code_o11y_llm/deploy/cron_scorer.sh ~/observability >> ~/scorer-cron.log 2>&1 || \
               echo "scorer FAILED $(date)" | mail -s "Claude scorer failed" you@example.com
    ```
+   (the wrapper exits 0 on a skipped overlap, so `||` only fires on a real failure).
 
 2. **Loki health event → Grafana alert (dashboard/notify).** Every run pushes one
    `run_status` row (`--emit-status`) to a separate stream `claude-code-scorer-health`
@@ -173,7 +185,7 @@ Once `COMPOSE_FILE` is set, the stack folder behaves normally — just **never**
 `down -v`, which would also drop `grafana_data` + `caddy_data` (TLS certs):
 
 ```bash
-docker compose up -d        # stack + dashboard + one scorer run
+docker compose up -d        # stack + dashboard (scorer is profiled — runs on demand only)
 docker compose down         # safe: removes containers/network, KEEPS all named volumes
 ```
 
@@ -199,7 +211,7 @@ Lives in the **stack dir**, not this repo's `deploy/`. Template: `deploy/.env.ex
 | `SCORER_ARGS` | — | `--dry-run` uses the offline stub (no key) |
 | `PROBE` | `1` | `0` = skip the Loki connectivity preflight |
 | `FETCH` | `1` | `0` = skip HTTP fetch, score a pre-mounted `data/raw` |
-| `FETCH_DAYS` | `3` | rolling fetch window (days). Bounds each run; widen (e.g. `30`) for a first backfill or after a gap |
+| `FETCH_DAYS` | `1` | rolling fetch window (days). Bounds each run so it finishes under the cron interval; `setup.sh` writes `1` (override with `--fetch-days`). Widen (e.g. `30`) for a first backfill or after a gap |
 | `SKIP_SCORED` | `1` | `0` = re-score everything in the window |
 
 ## Verify on first deploy

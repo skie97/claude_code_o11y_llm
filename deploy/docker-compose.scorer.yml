@@ -17,6 +17,12 @@
 # ../claude_code_o11y_llm/... — relative to the stack repo, not to this file.
 services:
   scorer:
+    # Profiled so `docker compose up -d` does NOT start it. It is a run-to-completion
+    # job, not a long-running service — starting it on every `up` fires an unscheduled
+    # run (one per deploy) that overlaps the cron. With a profile, `up` skips it while
+    # `docker compose --profile scorer run --rm scorer` (cron + manual) still works and
+    # `--profile scorer build` still builds the image. See deploy/cron_scorer.sh.
+    profiles: ["scorer"]
     build:
       context: ../claude_code_o11y_llm   # repo root, so the image can COPY scripts/
       dockerfile: deploy/Dockerfile
@@ -29,7 +35,7 @@ services:
       - SCORER_ARGS=${SCORER_ARGS:-}
       - PROBE=${PROBE:-1}
       - FETCH=${FETCH:-1}
-      - FETCH_DAYS=${FETCH_DAYS:-3}
+      - FETCH_DAYS=${FETCH_DAYS:-1}
       - SKIP_SCORED=${SKIP_SCORED:-1}
     volumes:
       # The in-cluster HTTP fetch (fetch_loki_http.py) now populates data/raw from

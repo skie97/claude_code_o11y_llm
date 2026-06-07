@@ -1,0 +1,4 @@
+# Shell scripts run on the Linux box and inside Docker — they MUST be LF.
+# A CRLF script fails on Linux with "bad interpreter: ^M" / "file not found".
+# eol=lf forces LF in the working tree too, regardless of core.autocrlf.
+*.sh text eol=lf
